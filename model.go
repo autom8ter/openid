@@ -1,9 +1,14 @@
 package openid
 
 import (
+	"encoding/gob"
 	"github.com/gorilla/sessions"
 	"golang.org/x/oauth2"
 )
+
+func init() {
+	gob.Register(&Data{})
+}
 
 var (
 	DefaultScopes = []string{"openid", "email", "profile"}
@@ -35,3 +40,5 @@ type Config struct {
 	algorithms  []string
 	store       *sessions.CookieStore
 }
+
+type Data map[string]interface{}

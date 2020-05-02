@@ -73,7 +73,7 @@ func (c *Config) HandleRedirect() http.HandlerFunc {
 
 func (c *Config) Login(redirect string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		sess, err := c.store.Get(r, "openid")
+		sess, err := c.store.Get(r, SessionName)
 		if err != nil {
 			http.Error(w, "failed to get session", http.StatusBadRequest)
 			return
@@ -84,6 +84,7 @@ func (c *Config) Login(redirect string) http.HandlerFunc {
 			http.Error(w, "failed to exchange authorization code", http.StatusBadRequest)
 			return
 		}
+		client := c.oAuth2.Client(r.Context(), oauth2Token)
 		rawIDToken, ok := oauth2Token.Extra("id_token").(string)
 		if !ok {
 			http.Error(w, "id token not found", http.StatusBadRequest)
@@ -94,8 +95,46 @@ func (c *Config) Login(redirect string) http.HandlerFunc {
 			http.Error(w, "failed to parse id token", http.StatusBadRequest)
 			return
 		}
-		sess.Values["id"] = payload
-
+		idToken := Data{}
+		if err := json.Unmarshal(payload, &idToken); err != nil {
+			http.Error(w, "failed to unmarshal id token", http.StatusInternalServerError)
+			return
+		}
+		sess.Values["idToken"] = idToken
+		resp, err := client.Get(c.userInfoUrl)
+		if err != nil {
+			http.Error(w, "failed to exchange authorization code", http.StatusBadRequest)
+			return
+		}
+		defer resp.Body.Close()
+		usr := Data{}
+		if err := json.NewDecoder(resp.Body).Decode(&usr); err != nil {
+			http.Error(w, "failed to exchange authorization code", http.StatusBadRequest)
+			return
+		}
+		sess.Values["usrInfo"] = usr
 		http.Redirect(w, r, redirect, http.StatusTemporaryRedirect)
 	}
+}
+
+func (c *Config) GetIDToken(r *http.Request) (Data, error) {
+	sess, err := c.store.Get(r, SessionName)
+	if err != nil {
+		return nil, err
+	}
+	if data, ok := sess.Values["idToken"].(Data); ok {
+		return data, nil
+	}
+	return nil, nil
+}
+
+func (c *Config) GetUsrInfo(r *http.Request) (Data, error) {
+	sess, err := c.store.Get(r, SessionName)
+	if err != nil {
+		return nil, err
+	}
+	if data, ok := sess.Values["usrInfo"].(Data); ok {
+		return data, nil
+	}
+	return nil, nil
 }
