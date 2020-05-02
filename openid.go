@@ -103,13 +103,13 @@ func (c *Config) Login(redirect string) http.HandlerFunc {
 		sess.Values["idToken"] = idToken
 		resp, err := client.Get(c.userInfoUrl)
 		if err != nil {
-			http.Error(w, "failed to exchange authorization code", http.StatusBadRequest)
+			http.Error(w, "failed get user info", http.StatusBadRequest)
 			return
 		}
 		defer resp.Body.Close()
 		usr := Data{}
 		if err := json.NewDecoder(resp.Body).Decode(&usr); err != nil {
-			http.Error(w, "failed to exchange authorization code", http.StatusBadRequest)
+			http.Error(w, "failed to decode user info", http.StatusBadRequest)
 			return
 		}
 		sess.Values["usrInfo"] = usr
