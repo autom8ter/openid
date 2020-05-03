@@ -20,7 +20,7 @@ func Test(t *testing.T) {
 	if err != nil {
 		t.Fatal(err.Error())
 	}
-	id, err := config.GetOpenID(context.Background(), os.Getenv("OPENID_TEST_CODE"))
+	id, err := config.GetUser(context.Background(), os.Getenv("OPENID_TEST_CODE"))
 	if err != nil {
 		t.Fatal(err.Error())
 	}

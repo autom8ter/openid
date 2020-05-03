@@ -29,13 +29,21 @@ func NewConfig(opts *Opts) (*Config, error)
 ```
 NewConfig creates a new Config from the given options
 
-#### func (*Config) GetOpenID
+#### func (*Config) GetUser
 
 ```go
-func (c *Config) GetOpenID(ctx context.Context, code string) (*OpenID, error)
+func (c *Config) GetUser(ctx context.Context, code string) (*User, error)
 ```
-GetOpenID gets an OpenID type by exchanging the authorization code for an access
-& id token, then calling the userinfo endpoint
+GetUser gets an OpenID type by exchanging the authorization code for an access &
+id token, then calling the userinfo endpoint
+
+#### func (*Config) HandleLogin
+
+```go
+func (c *Config) HandleLogin(handler LoginHandler, redirect string) http.HandlerFunc
+```
+HandleLogin gets the user from the request, executes the LoginHandler and then
+redirects to the input redirect
 
 #### func (*Config) Issuer
 
@@ -65,25 +73,12 @@ func (c *Config) UserInfoUrl() string
 ```
 OAuth2 returns the Configs user info url returned from the discovery endpoint
 
-#### type OpenID
+#### type LoginHandler
 
 ```go
-type OpenID struct {
-	AuthToken *oauth2.Token
-	IDToken   map[string]interface{}
-	UserInfo  map[string]interface{}
-}
+type LoginHandler func(w http.ResponseWriter, r *http.Request, usr *User) error
 ```
 
-OpenID contains the Access Token returned from the token endpoint, the ID tokens
-payload, and the payload returned from the userInfo endpoint
-
-#### func (*OpenID) String
-
-```go
-func (o *OpenID) String() string
-```
-String prints a pretty json string of the OpenID
 
 #### type Opts
 
@@ -107,3 +102,23 @@ type Opts struct {
 ```
 
 Opts are options used when creating a new Configuration
+
+#### type User
+
+```go
+type User struct {
+	AuthToken *oauth2.Token
+	IDToken   map[string]interface{}
+	UserInfo  map[string]interface{}
+}
+```
+
+User contains the Access Token returned from the token endpoint, the ID tokens
+payload, and the payload returned from the userInfo endpoint
+
+#### func (*User) String
+
+```go
+func (o *User) String() string
+```
+String prints a pretty json string of the OpenID

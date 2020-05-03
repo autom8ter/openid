@@ -52,18 +52,20 @@ type Config struct {
 	skipIssuer  bool
 }
 
-//OpenID contains the Access Token returned from the token endpoint,  the ID tokens payload, and the payload returned from the userInfo endpoint
-type OpenID struct {
+//User contains the Access Token returned from the token endpoint,  the ID tokens payload, and the payload returned from the userInfo endpoint
+type User struct {
 	AuthToken *oauth2.Token
 	IDToken   map[string]interface{}
 	UserInfo  map[string]interface{}
 }
 
 // String prints a pretty json string of the OpenID
-func (o *OpenID) String() string {
+func (o *User) String() string {
 	bits, _ := json.MarshalIndent(o, "", "    ")
 	return string(bits)
 }
+
+type LoginHandler func(w http.ResponseWriter, r *http.Request, usr *User) error
 
 // NewConfig creates a new Config from the given options
 func NewConfig(opts *Opts) (*Config, error) {
@@ -120,8 +122,8 @@ func (c *Config) Issuer() string {
 	return c.issuer
 }
 
-// GetOpenID gets an OpenID type by exchanging the authorization code for an access & id token, then calling the userinfo endpoint
-func (c *Config) GetOpenID(ctx context.Context, code string) (*OpenID, error) {
+// GetUser gets an OpenID type by exchanging the authorization code for an access & id token, then calling the userinfo endpoint
+func (c *Config) GetUser(ctx context.Context, code string) (*User, error) {
 	oauth2Token, err := c.oAuth2.Exchange(ctx, code)
 	if err != nil {
 		return nil, fmt.Errorf("[Access Token] %s", err.Error())
@@ -182,7 +184,7 @@ func (c *Config) GetOpenID(ctx context.Context, code string) (*OpenID, error) {
 	if idToken["sub"] != usrClaims["sub"] {
 		return nil, fmt.Errorf("[User Info] sub mismatch: %v != %s", idToken["sub"], usrClaims["sub"])
 	}
-	return &OpenID{
+	return &User{
 		UserInfo:  usrClaims,
 		IDToken:   idToken,
 		AuthToken: oauth2Token,
@@ -200,4 +202,22 @@ func (c *Config) ParseJWT(p string) ([]byte, error) {
 		return nil, fmt.Errorf("malformed jwt payload: %v", err)
 	}
 	return payload, nil
+}
+
+//HandleLogin gets the user from the request, executes the LoginHandler and then redirects to the input redirect
+func (c *Config) HandleLogin(handler LoginHandler, redirect string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		//exchange authorization code for a OpenID type containing access token, id token, and userinfo
+		usr, err := c.GetUser(r.Context(), r.URL.Query().Get("code"))
+		if err != nil {
+			http.Error(w, "failed to get user", http.StatusBadRequest)
+			return
+		}
+		if err := handler(w, r, usr); err != nil {
+			http.Error(w, fmt.Sprintf("failed to handle user: %s", err.Error()), http.StatusBadRequest)
+			return
+		}
+		//redirect to page as authenicated user
+		http.Redirect(w, r, redirect, http.StatusTemporaryRedirect)
+	}
 }
