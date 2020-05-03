@@ -6,6 +6,7 @@ import (
 	"github.com/gorilla/sessions"
 	"golang.org/x/oauth2"
 	"net/http"
+	"time"
 )
 
 func NewConfig(opts *Opts) (*Config, error) {
@@ -38,9 +39,8 @@ func NewConfig(opts *Opts) (*Config, error) {
 			RedirectURL: opts.Redirect,
 			Scopes:      opts.Scopes,
 		},
-		jWKSUrl:     data.JWKSUrl,
+		issuer:      data.Issuer,
 		userInfoUrl: data.UserInfoUrl,
-		algorithms:  data.Algorithms,
 		store:       sessions.NewCookieStore([]byte(opts.SessionSecret)),
 	}, nil
 }
@@ -49,16 +49,12 @@ func (c *Config) OAuth2() *oauth2.Config {
 	return c.oAuth2
 }
 
-func (c *Config) JWKSUrl() string {
-	return c.jWKSUrl
-}
-
 func (c *Config) UserInfoUrl() string {
 	return c.userInfoUrl
 }
 
-func (c *Config) Algorithms() []string {
-	return c.algorithms
+func (c *Config) Issuer() string {
+	return c.issuer
 }
 
 func (c *Config) CookieStore() *sessions.CookieStore {
@@ -78,7 +74,6 @@ func (c *Config) Login(redirect string) http.HandlerFunc {
 			http.Error(w, "failed to get session", http.StatusBadRequest)
 			return
 		}
-		defer sess.Save(r, w)
 		oauth2Token, err := c.oAuth2.Exchange(r.Context(), r.URL.Query().Get("code"))
 		if err != nil {
 			http.Error(w, "failed to exchange authorization code", http.StatusBadRequest)
@@ -95,45 +90,66 @@ func (c *Config) Login(redirect string) http.HandlerFunc {
 			http.Error(w, "failed to parse id token", http.StatusBadRequest)
 			return
 		}
-		idToken := Data{}
-		if err := json.Unmarshal(payload, &idToken); err != nil {
+		claims := Claims{}
+		if err := json.Unmarshal(payload, &claims); err != nil {
 			http.Error(w, "failed to unmarshal id token", http.StatusInternalServerError)
 			return
 		}
-		sess.Values["idToken"] = idToken
+		if claims["aud"].(string) != c.oAuth2.ClientID {
+			http.Error(w, "audience mismatch", http.StatusBadRequest)
+			return
+		}
+
+		if claims["iss"].(string) != c.issuer {
+			http.Error(w, "issuer mismatch", http.StatusBadRequest)
+			return
+		}
+
+		if exp, ok := claims["exp"].(float64); ok {
+			if time.Unix(int64(exp), 0).Before(time.Now()) {
+				http.Error(w, "token expired", http.StatusBadRequest)
+				return
+			}
+		} else {
+			http.Error(w, "token expiration claim missing", http.StatusBadRequest)
+			return
+		}
+
 		resp, err := client.Get(c.userInfoUrl)
 		if err != nil {
 			http.Error(w, "failed get user info", http.StatusBadRequest)
 			return
 		}
 		defer resp.Body.Close()
-		usr := Data{}
-		if err := json.NewDecoder(resp.Body).Decode(&usr); err != nil {
+		usrClaims := Claims{}
+		if err := json.NewDecoder(resp.Body).Decode(&usrClaims); err != nil {
 			http.Error(w, "failed to decode user info", http.StatusBadRequest)
 			return
 		}
-		sess.Values["usrInfo"] = usr
+		if claims["sub"] != usrClaims["sub"] {
+			http.Error(w, "idToken and userInfo sub mismatch", http.StatusBadRequest)
+			return
+		}
+
+		for k, v := range usrClaims {
+			claims[k] = v
+		}
+
+		sess.Values["claims"] = claims
+		if err := sess.Save(r, w); err != nil {
+			http.Error(w, "failed to save session", http.StatusInternalServerError)
+			return
+		}
 		http.Redirect(w, r, redirect, http.StatusTemporaryRedirect)
 	}
 }
 
-func (c *Config) GetIDToken(r *http.Request) (Data, error) {
+func (c *Config) GetClaims(r *http.Request) (Claims, error) {
 	sess, err := c.store.Get(r, SessionName)
 	if err != nil {
 		return nil, err
 	}
-	if data, ok := sess.Values["idToken"].(Data); ok {
-		return data, nil
-	}
-	return nil, nil
-}
-
-func (c *Config) GetUsrInfo(r *http.Request) (Data, error) {
-	sess, err := c.store.Get(r, SessionName)
-	if err != nil {
-		return nil, err
-	}
-	if data, ok := sess.Values["usrInfo"].(Data); ok {
+	if data, ok := sess.Values["claims"].(Claims); ok {
 		return data, nil
 	}
 	return nil, nil

@@ -7,7 +7,7 @@ import (
 )
 
 func init() {
-	gob.Register(&Data{})
+	gob.Register(&Claims{})
 }
 
 var (
@@ -16,12 +16,10 @@ var (
 )
 
 type wellKnown struct {
-	Issuer      string   `json:"issuer"`
-	AuthUrl     string   `json:"authorization_endpoint"`
-	TokenUrl    string   `json:"token_endpoint"`
-	JWKSUrl     string   `json:"jwks_uri"`
-	UserInfoUrl string   `json:"userinfo_endpoint"`
-	Algorithms  []string `json:"id_token_signing_alg_values_supported"`
+	Issuer      string `json:"issuer"`
+	AuthUrl     string `json:"authorization_endpoint"`
+	TokenUrl    string `json:"token_endpoint"`
+	UserInfoUrl string `json:"userinfo_endpoint"`
 }
 
 type Opts struct {
@@ -35,10 +33,9 @@ type Opts struct {
 
 type Config struct {
 	oAuth2      *oauth2.Config
-	jWKSUrl     string
+	issuer      string
 	userInfoUrl string
-	algorithms  []string
 	store       *sessions.CookieStore
 }
 
-type Data map[string]interface{}
+type Claims map[string]interface{}
