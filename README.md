@@ -29,6 +29,12 @@ func NewConfig(opts *Opts) (*Config, error)
 ```
 NewConfig creates a new Config from the given options
 
+#### func (*Config) AuthorizationRedirect
+
+```go
+func (c *Config) AuthorizationRedirect() http.HandlerFunc
+```
+
 #### func (*Config) GetUser
 
 ```go
@@ -66,6 +72,12 @@ func (c *Config) ParseJWT(p string) ([]byte, error)
 ```
 ParseJWT parses the jwt and returns the payload(middle portion)
 
+#### func (*Config) Session
+
+```go
+func (c *Config) Session(r *http.Request) (*sessions.Session, error)
+```
+
 #### func (*Config) UserInfoUrl
 
 ```go
@@ -98,6 +110,7 @@ type Opts struct {
 	Scopes []string
 	// SkipIssuerCheck skips the openid issuer check
 	SkipIssuerCheck bool
+	SessionSecret   string
 }
 ```
 

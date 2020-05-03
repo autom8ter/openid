@@ -8,10 +8,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gorilla/sessions"
 	"golang.org/x/oauth2"
 	"net/http"
 	"strings"
 	"time"
+)
+
+const (
+	stateCookieParam = "openIDState"
 )
 
 var (
@@ -42,6 +47,7 @@ type Opts struct {
 	Scopes []string
 	// SkipIssuerCheck skips the openid issuer check
 	SkipIssuerCheck bool
+	SessionSecret   string
 }
 
 //Config is used to to complete the Open ID Connect protocol using the Authorization Grant Authentication Flow.
@@ -50,6 +56,7 @@ type Config struct {
 	issuer      string
 	userInfoUrl string
 	skipIssuer  bool
+	store       *sessions.CookieStore
 }
 
 //User contains the Access Token returned from the token endpoint,  the ID tokens payload, and the payload returned from the userInfo endpoint
@@ -104,12 +111,17 @@ func NewConfig(opts *Opts) (*Config, error) {
 		issuer:      data.Issuer,
 		userInfoUrl: data.UserInfoUrl,
 		skipIssuer:  opts.SkipIssuerCheck,
+		store:       sessions.NewCookieStore([]byte(opts.SessionSecret)),
 	}, nil
 }
 
 // OAuth2 returns a pointer to the Configs oauth2.Config
 func (c *Config) OAuth2() *oauth2.Config {
 	return c.oAuth2
+}
+
+func (c *Config) Session(r *http.Request) (*sessions.Session, error) {
+	return c.store.Get(r, "openid")
 }
 
 // OAuth2 returns the Configs user info url returned from the discovery endpoint
@@ -207,10 +219,23 @@ func (c *Config) ParseJWT(p string) ([]byte, error) {
 //HandleLogin gets the user from the request, executes the LoginHandler and then redirects to the input redirect
 func (c *Config) HandleLogin(handler LoginHandler, redirect string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("code") == "" {
+			http.Error(w, "missing authorization code url param", http.StatusBadRequest)
+			return
+		}
+		sess, err := c.Session(r)
+		if err != nil {
+			http.Error(w, "failed to get session", http.StatusBadRequest)
+			return
+		}
+		if r.URL.Query().Get("state") != sess.Values["state"].(string) {
+			http.Error(w, "invalid state", http.StatusBadRequest)
+			return
+		}
 		//exchange authorization code for a OpenID type containing access token, id token, and userinfo
 		usr, err := c.GetUser(r.Context(), r.URL.Query().Get("code"))
 		if err != nil {
-			http.Error(w, "failed to get user", http.StatusBadRequest)
+			http.Error(w, fmt.Sprintf("failed to get user: %s", err.Error()), http.StatusBadRequest)
 			return
 		}
 		if err := handler(w, r, usr); err != nil {
@@ -219,5 +244,23 @@ func (c *Config) HandleLogin(handler LoginHandler, redirect string) http.Handler
 		}
 		//redirect to page as authenicated user
 		http.Redirect(w, r, redirect, http.StatusTemporaryRedirect)
+	}
+}
+
+func (c *Config) AuthorizationRedirect() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sess, err := c.Session(r)
+		if err != nil {
+			http.Error(w, "failed to get session", http.StatusBadRequest)
+			return
+		}
+		state := string(time.Now().UnixNano())
+		state = base64.StdEncoding.EncodeToString([]byte(state))
+		sess.Values["state"] = state
+		if err := sess.Save(r, w); err != nil {
+			http.Error(w, "failed to save session", http.StatusBadRequest)
+			return
+		}
+		http.Redirect(w, r, c.oAuth2.AuthCodeURL(state), http.StatusTemporaryRedirect)
 	}
 }
