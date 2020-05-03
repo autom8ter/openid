@@ -88,6 +88,9 @@ func NewConfig(opts *Opts) (*Config, error) {
 	if opts.DiscoveryUrl == "" {
 		return nil, errors.New("[Config] empty discovery url")
 	}
+	if opts.SessionSecret == "" {
+		opts.SessionSecret = "default_secret"
+	}
 	resp, err := http.Get(opts.DiscoveryUrl)
 	if err != nil {
 		return nil, err
@@ -228,6 +231,7 @@ func (c *Config) HandleLogin(handler LoginHandler, redirect string) http.Handler
 			http.Error(w, "failed to get session", http.StatusBadRequest)
 			return
 		}
+		defer sess.Save(r,w)
 		if r.URL.Query().Get("state") != sess.Values["state"].(string) {
 			http.Error(w, "invalid state", http.StatusBadRequest)
 			return
@@ -242,6 +246,7 @@ func (c *Config) HandleLogin(handler LoginHandler, redirect string) http.Handler
 			http.Error(w, fmt.Sprintf("failed to handle user: %s", err.Error()), http.StatusBadRequest)
 			return
 		}
+		sess.Values["loggedIn"] = true
 		//redirect to page as authenicated user
 		http.Redirect(w, r, redirect, http.StatusTemporaryRedirect)
 	}
@@ -262,5 +267,20 @@ func (c *Config) AuthorizationRedirect() http.HandlerFunc {
 			return
 		}
 		http.Redirect(w, r, c.oAuth2.AuthCodeURL(state), http.StatusTemporaryRedirect)
+	}
+}
+
+func (c *Config) Middleware(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sess, err := c.Session(r)
+		if err != nil {
+			http.Error(w, "failed to get session", http.StatusUnauthorized)
+			return
+		}
+		if sess.Values["loggedIn"] == nil || sess.Values["loggedIn"].(bool) == false {
+			c.AuthorizationRedirect().ServeHTTP(w,r)
+			return
+		}
+		handler.ServeHTTP(w,r)
 	}
 }
