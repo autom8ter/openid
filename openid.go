@@ -15,14 +15,20 @@ import (
 	"time"
 )
 
-const (
-	stateCookieParam = "openIDState"
-)
+func init() {
+	session = sessions.NewCookieStore([]byte("default_secret"))
+}
 
 var (
+	session *sessions.CookieStore
 	//DefaultScopes are added if a Configs scopes are empty, they include: openid, email, profile
 	DefaultScopes = []string{"openid", "email", "profile"}
 )
+
+//SetSession overrides the default session store(recommended for production usage)
+func SetSession(store *sessions.CookieStore) {
+	session = store
+}
 
 type wellKnown struct {
 	Issuer      string `json:"issuer"`
@@ -47,7 +53,6 @@ type Opts struct {
 	Scopes []string
 	// SkipIssuerCheck skips the openid issuer check
 	SkipIssuerCheck bool
-	SessionSecret   string
 }
 
 //Config is used to to complete the Open ID Connect protocol using the Authorization Grant Authentication Flow.
@@ -56,7 +61,6 @@ type Config struct {
 	issuer      string
 	userInfoUrl string
 	skipIssuer  bool
-	store       *sessions.CookieStore
 }
 
 //User contains the Access Token returned from the token endpoint,  the ID tokens payload, and the payload returned from the userInfo endpoint
@@ -88,9 +92,6 @@ func NewConfig(opts *Opts) (*Config, error) {
 	if opts.DiscoveryUrl == "" {
 		return nil, errors.New("[Config] empty discovery url")
 	}
-	if opts.SessionSecret == "" {
-		opts.SessionSecret = "default_secret"
-	}
 	resp, err := http.Get(opts.DiscoveryUrl)
 	if err != nil {
 		return nil, err
@@ -114,7 +115,6 @@ func NewConfig(opts *Opts) (*Config, error) {
 		issuer:      data.Issuer,
 		userInfoUrl: data.UserInfoUrl,
 		skipIssuer:  opts.SkipIssuerCheck,
-		store:       sessions.NewCookieStore([]byte(opts.SessionSecret)),
 	}, nil
 }
 
@@ -123,8 +123,12 @@ func (c *Config) OAuth2() *oauth2.Config {
 	return c.oAuth2
 }
 
+func GetSession(r *http.Request) (*sessions.Session, error) {
+	return session.Get(r, "openid")
+}
+
 func (c *Config) Session(r *http.Request) (*sessions.Session, error) {
-	return c.store.Get(r, "openid")
+	return session.Get(r, "openid")
 }
 
 // OAuth2 returns the Configs user info url returned from the discovery endpoint
@@ -231,7 +235,6 @@ func (c *Config) HandleLogin(handler LoginHandler, redirect string) http.Handler
 			http.Error(w, "failed to get session", http.StatusBadRequest)
 			return
 		}
-		defer sess.Save(r,w)
 		if r.URL.Query().Get("state") != sess.Values["state"].(string) {
 			http.Error(w, "invalid state", http.StatusBadRequest)
 			return
@@ -247,11 +250,16 @@ func (c *Config) HandleLogin(handler LoginHandler, redirect string) http.Handler
 			return
 		}
 		sess.Values["loggedIn"] = true
+		if err := sess.Save(r, w); err != nil {
+			http.Error(w, "failed to save session", http.StatusBadRequest)
+			return
+		}
 		//redirect to page as authenicated user
 		http.Redirect(w, r, redirect, http.StatusTemporaryRedirect)
 	}
 }
 
+//AuthorizationRedirect is an http handler that redirects the user to the identity providers login screen
 func (c *Config) AuthorizationRedirect() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sess, err := c.Session(r)
@@ -270,17 +278,18 @@ func (c *Config) AuthorizationRedirect() http.HandlerFunc {
 	}
 }
 
-func (c *Config) Middleware(handler http.HandlerFunc) http.HandlerFunc {
+//Middleware wraps the http handler and redirects the user to the redirect if they are not logged in
+func Middleware(handler http.HandlerFunc, redirect string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		sess, err := c.Session(r)
+		sess, err := GetSession(r)
 		if err != nil {
 			http.Error(w, "failed to get session", http.StatusUnauthorized)
 			return
 		}
 		if sess.Values["loggedIn"] == nil || sess.Values["loggedIn"].(bool) == false {
-			c.AuthorizationRedirect().ServeHTTP(w,r)
+			http.Redirect(w, r, redirect, http.StatusTemporaryRedirect)
 			return
 		}
-		handler.ServeHTTP(w,r)
+		handler.ServeHTTP(w, r)
 	}
 }
