@@ -42,7 +42,7 @@ GetOpenID gets an OpenID type by exchanging the authorization code for an access
 ```go
 func (c *Config) Issuer() string
 ```
-Issuer returns the Configs issuer returned from the openid
+OAuth2 returns the Configs issuer returned from the discovery endpoint
 
 #### func (*Config) OAuth2
 
@@ -63,7 +63,7 @@ ParseJWT parses the jwt and returns the payload(middle portion)
 ```go
 func (c *Config) UserInfoUrl() string
 ```
-OAuth2 returns the Configs user info url
+OAuth2 returns the Configs user info url returned from the discovery endpoint
 
 #### type OpenID
 

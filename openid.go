@@ -110,12 +110,12 @@ func (c *Config) OAuth2() *oauth2.Config {
 	return c.oAuth2
 }
 
-// OAuth2 returns the Configs user info url
+// OAuth2 returns the Configs user info url returned from the discovery endpoint
 func (c *Config) UserInfoUrl() string {
 	return c.userInfoUrl
 }
 
-// Issuer returns the Configs issuer returned from the openid
+// OAuth2 returns the Configs issuer returned from the discovery endpoint
 func (c *Config) Issuer() string {
 	return c.issuer
 }
