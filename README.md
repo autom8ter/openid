@@ -7,10 +7,32 @@
 
 ```go
 var (
+
 	//DefaultScopes are added if a Configs scopes are empty, they include: openid, email, profile
 	DefaultScopes = []string{"openid", "email", "profile"}
 )
 ```
+
+#### func  GetSession
+
+```go
+func GetSession(r *http.Request) (*sessions.Session, error)
+```
+
+#### func  Middleware
+
+```go
+func Middleware(handler http.HandlerFunc, redirect string) http.HandlerFunc
+```
+Middleware wraps the http handler and redirects the user to the redirect if they
+are not logged in
+
+#### func  SetSession
+
+```go
+func SetSession(store *sessions.CookieStore)
+```
+SetSession overrides the default session store(recommended for production usage)
 
 #### type Config
 
@@ -34,6 +56,8 @@ NewConfig creates a new Config from the given options
 ```go
 func (c *Config) AuthorizationRedirect() http.HandlerFunc
 ```
+AuthorizationRedirect is an http handler that redirects the user to the identity
+providers login screen
 
 #### func (*Config) GetUser
 
@@ -110,7 +134,6 @@ type Opts struct {
 	Scopes []string
 	// SkipIssuerCheck skips the openid issuer check
 	SkipIssuerCheck bool
-	SessionSecret   string
 }
 ```
 
