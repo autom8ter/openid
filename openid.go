@@ -1,23 +1,55 @@
 package openid
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
-	"github.com/gorilla/sessions"
+	"fmt"
 	"golang.org/x/oauth2"
 	"net/http"
 	"time"
 )
+
+var (
+	DefaultScopes = []string{"openid", "email", "profile"}
+)
+
+type wellKnown struct {
+	Issuer      string `json:"issuer"`
+	AuthUrl     string `json:"authorization_endpoint"`
+	TokenUrl    string `json:"token_endpoint"`
+	UserInfoUrl string `json:"userinfo_endpoint"`
+}
+
+type Opts struct {
+	WellKnownUrl string
+	ClientID     string
+	ClientSecret string
+	Redirect     string
+	Scopes       []string
+}
+
+type Config struct {
+	oAuth2      *oauth2.Config
+	issuer      string
+	userInfoUrl string
+}
+
+type OpenID struct {
+	UserInfo  map[string]interface{}
+	IDToken   map[string]interface{}
+	AuthToken *oauth2.Token
+}
 
 func NewConfig(opts *Opts) (*Config, error) {
 	if len(opts.Scopes) == 0 {
 		opts.Scopes = DefaultScopes
 	}
 	if opts.ClientID == "" {
-		return nil, errors.New("empty clientID")
+		return nil, errors.New("[Config] empty clientID")
 	}
 	if opts.ClientSecret == "" {
-		return nil, errors.New("empty client secret")
+		return nil, errors.New("[Config] empty client secret")
 	}
 	resp, err := http.Get(opts.WellKnownUrl)
 	if err != nil {
@@ -26,7 +58,7 @@ func NewConfig(opts *Opts) (*Config, error) {
 	defer resp.Body.Close()
 	data := &wellKnown{}
 	if err := json.NewDecoder(resp.Body).Decode(data); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("[Config] decoding well known: %s", err.Error())
 	}
 	return &Config{
 		oAuth2: &oauth2.Config{
@@ -41,7 +73,6 @@ func NewConfig(opts *Opts) (*Config, error) {
 		},
 		issuer:      data.Issuer,
 		userInfoUrl: data.UserInfoUrl,
-		store:       sessions.NewCookieStore([]byte(opts.SessionSecret)),
 	}, nil
 }
 
@@ -57,100 +88,70 @@ func (c *Config) Issuer() string {
 	return c.issuer
 }
 
-func (c *Config) CookieStore() *sessions.CookieStore {
-	return c.store
+func (c *Config) RedirectLoginURL(w http.ResponseWriter, r *http.Request, state string) {
+	http.Redirect(w, r, c.oAuth2.AuthCodeURL(state), http.StatusTemporaryRedirect)
 }
 
-func (c *Config) HandleRedirect() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, c.oAuth2.AuthCodeURL(""), http.StatusFound)
-	}
-}
-
-func (c *Config) Login(redirect string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		sess, err := c.store.Get(r, SessionName)
-		if err != nil {
-			http.Error(w, "failed to get session", http.StatusBadRequest)
-			return
-		}
-		oauth2Token, err := c.oAuth2.Exchange(r.Context(), r.URL.Query().Get("code"))
-		if err != nil {
-			http.Error(w, "failed to exchange authorization code", http.StatusBadRequest)
-			return
-		}
-		client := c.oAuth2.Client(r.Context(), oauth2Token)
-		rawIDToken, ok := oauth2Token.Extra("id_token").(string)
-		if !ok {
-			http.Error(w, "id token not found", http.StatusBadRequest)
-			return
-		}
-		payload, err := parseJWT(rawIDToken)
-		if err != nil {
-			http.Error(w, "failed to parse id token", http.StatusBadRequest)
-			return
-		}
-		claims := Claims{}
-		if err := json.Unmarshal(payload, &claims); err != nil {
-			http.Error(w, "failed to unmarshal id token", http.StatusInternalServerError)
-			return
-		}
-		if claims["aud"].(string) != c.oAuth2.ClientID {
-			http.Error(w, "audience mismatch", http.StatusBadRequest)
-			return
-		}
-
-		if claims["iss"].(string) != c.issuer {
-			http.Error(w, "issuer mismatch", http.StatusBadRequest)
-			return
-		}
-
-		if exp, ok := claims["exp"].(float64); ok {
-			if time.Unix(int64(exp), 0).Before(time.Now()) {
-				http.Error(w, "token expired", http.StatusBadRequest)
-				return
-			}
-		} else {
-			http.Error(w, "token expiration claim missing", http.StatusBadRequest)
-			return
-		}
-
-		resp, err := client.Get(c.userInfoUrl)
-		if err != nil {
-			http.Error(w, "failed get user info", http.StatusBadRequest)
-			return
-		}
-		defer resp.Body.Close()
-		usrClaims := Claims{}
-		if err := json.NewDecoder(resp.Body).Decode(&usrClaims); err != nil {
-			http.Error(w, "failed to decode user info", http.StatusBadRequest)
-			return
-		}
-		if claims["sub"] != usrClaims["sub"] {
-			http.Error(w, "idToken and userInfo sub mismatch", http.StatusBadRequest)
-			return
-		}
-
-		for k, v := range usrClaims {
-			claims[k] = v
-		}
-
-		sess.Values["claims"] = claims
-		if err := sess.Save(r, w); err != nil {
-			http.Error(w, "failed to save session", http.StatusInternalServerError)
-			return
-		}
-		http.Redirect(w, r, redirect, http.StatusTemporaryRedirect)
-	}
-}
-
-func (c *Config) GetClaims(r *http.Request) (Claims, error) {
-	sess, err := c.store.Get(r, SessionName)
+func (c *Config) GetOpenID(ctx context.Context, code string) (*OpenID, error) {
+	oauth2Token, err := c.oAuth2.Exchange(ctx, code)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("[Access Token] %s", err.Error())
 	}
-	if data, ok := sess.Values["claims"].(Claims); ok {
-		return data, nil
+	client := c.oAuth2.Client(ctx, oauth2Token)
+	rawIDToken, ok := oauth2Token.Extra("id_token").(string)
+	if !ok {
+		return nil, errors.New("[Access Token] missing id_token")
 	}
-	return nil, nil
+	payload, err := parseJWT(rawIDToken)
+	if err != nil {
+		return nil, fmt.Errorf("[Id Token] %s", err.Error())
+	}
+	idToken := map[string]interface{}{}
+	if err := json.Unmarshal(payload, &idToken); err != nil {
+		return nil, fmt.Errorf("[Id Token] %s", err.Error())
+	}
+	if aud, ok := idToken["aud"].(string); ok {
+		if aud != c.oAuth2.ClientID {
+			return nil, fmt.Errorf("[Id Token] audience mismatch: %s != %s", aud, c.oAuth2.ClientID)
+		}
+	} else {
+		return nil, errors.New("[Id Token] missing aud claim")
+	}
+
+	if iss, ok := idToken["iss"].(string); ok {
+		if iss != c.issuer {
+			return nil, fmt.Errorf("[Id Token] issuer mismatch: %s != %s", iss, c.issuer)
+		}
+	} else {
+		return nil, errors.New("[Id Token] missing iss claim")
+	}
+
+	if exp, ok := idToken["exp"].(float64); ok {
+		if time.Unix(int64(exp), 0).Before(time.Now()) {
+			return nil, errors.New("[Id Token] id token expired")
+		}
+	} else {
+		return nil, errors.New("[Id Token] missing exp claim")
+	}
+	if idToken["sub"] == nil {
+		return nil, errors.New("[Id Token] missing sub claim")
+	}
+	resp, err := client.Get(c.userInfoUrl)
+	if err != nil {
+		return nil, fmt.Errorf("[User Info] failed to get user info: %s", err.Error())
+	}
+	defer resp.Body.Close()
+	usrClaims := map[string]interface{}{}
+	if err := json.NewDecoder(resp.Body).Decode(&usrClaims); err != nil {
+		return nil, fmt.Errorf("[User Info] failed to decode user info: %s", err.Error())
+	}
+
+	if idToken["sub"] != usrClaims["sub"] {
+		return nil, fmt.Errorf("[User Info] sub mismatch: %v != %s", idToken["sub"], usrClaims["sub"])
+	}
+	return &OpenID{
+		UserInfo:  usrClaims,
+		IDToken:   idToken,
+		AuthToken: oauth2Token,
+	}, nil
 }
