@@ -1,4 +1,4 @@
-module github.com/ShaleApps/openid
+module github.com/autom8ter/openid
 
 go 1.12
 

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/ShaleApps/openid"
+	"github.com/autom8ter/openid"
 	"log"
 	"net/http"
 	"os"
