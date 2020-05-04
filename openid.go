@@ -5,6 +5,7 @@ package openid
 import (
 	"context"
 	"encoding/base64"
+	"encoding/gob"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,14 +17,28 @@ import (
 )
 
 func init() {
+	gob.Register(&User{})
 	session = sessions.NewCookieStore([]byte("default_secret"))
 }
+
+const sessionName = "openid"
 
 var (
 	session *sessions.CookieStore
 	//DefaultScopes are added if a Configs scopes are empty, they include: openid, email, profile
 	DefaultScopes = []string{"openid", "email", "profile"}
 )
+
+//User is a combination of the IDToken and the data returned from the UserInfo endpoint
+type User struct {
+	IDToken map[string]interface{} `json:"id_token"`
+	UserInfo map[string]interface{} `json:"user_info"`
+}
+
+func (o *User) String() string {
+	bits, _ := json.MarshalIndent(o, "", "    ")
+	return string(bits)
+}
 
 //SetSession overrides the default session store(recommended for production usage)
 func SetSession(store *sessions.CookieStore) {
@@ -63,20 +78,18 @@ type Config struct {
 	skipIssuer  bool
 }
 
-//User contains the Access Token returned from the token endpoint,  the ID tokens payload, and the payload returned from the userInfo endpoint
-type User struct {
+type user struct {
 	AuthToken *oauth2.Token
 	IDToken   map[string]interface{}
 	UserInfo  map[string]interface{}
 }
 
-// String prints a pretty json string of the OpenID
-func (o *User) String() string {
-	bits, _ := json.MarshalIndent(o, "", "    ")
-	return string(bits)
+func (u user) ToUser() *User {
+	return &User{
+		UserInfo: u.UserInfo,
+		IDToken: u.IDToken,
+	}
 }
-
-type LoginHandler func(w http.ResponseWriter, r *http.Request, usr *User) error
 
 // NewConfig creates a new Config from the given options
 func NewConfig(opts *Opts) (*Config, error) {
@@ -124,11 +137,18 @@ func (c *Config) OAuth2() *oauth2.Config {
 }
 
 func GetSession(r *http.Request) (*sessions.Session, error) {
-	return session.Get(r, "openid")
+	return session.Get(r, sessionName)
 }
 
-func (c *Config) Session(r *http.Request) (*sessions.Session, error) {
-	return session.Get(r, "openid")
+func (c *Config) GetUser(r *http.Request) (*User, error) {
+	sess, err := session.Get(r, sessionName)
+	if err != nil {
+		return nil, err
+	}
+	if data, ok := sess.Values[c.userSessionKey()].(*User); ok {
+		return data, nil
+	}
+	return nil, nil
 }
 
 // OAuth2 returns the Configs user info url returned from the discovery endpoint
@@ -141,8 +161,12 @@ func (c *Config) Issuer() string {
 	return c.issuer
 }
 
-// GetUser gets an OpenID type by exchanging the authorization code for an access & id token, then calling the userinfo endpoint
-func (c *Config) GetUser(ctx context.Context, code string) (*User, error) {
+func (c *Config) userSessionKey() string {
+	return fmt.Sprintf("%s_user", c.issuer)
+}
+
+// getUser gets an OpenID type by exchanging the authorization code for an access & id token, then calling the userinfo endpoint
+func (c *Config) getUser(ctx context.Context, code string) (*user, error) {
 	oauth2Token, err := c.oAuth2.Exchange(ctx, code)
 	if err != nil {
 		return nil, fmt.Errorf("[Access Token] %s", err.Error())
@@ -152,7 +176,7 @@ func (c *Config) GetUser(ctx context.Context, code string) (*User, error) {
 	if !ok {
 		return nil, errors.New("[Access Token] missing id_token")
 	}
-	payload, err := c.ParseJWT(rawIDToken)
+	payload, err := c.parseJWT(rawIDToken)
 	if err != nil {
 		return nil, fmt.Errorf("[Id Token] %s", err.Error())
 	}
@@ -203,15 +227,15 @@ func (c *Config) GetUser(ctx context.Context, code string) (*User, error) {
 	if idToken["sub"] != usrClaims["sub"] {
 		return nil, fmt.Errorf("[User Info] sub mismatch: %v != %s", idToken["sub"], usrClaims["sub"])
 	}
-	return &User{
+	return &user{
 		UserInfo:  usrClaims,
 		IDToken:   idToken,
 		AuthToken: oauth2Token,
 	}, nil
 }
 
-// ParseJWT parses the jwt and returns the payload(middle portion)
-func (c *Config) ParseJWT(p string) ([]byte, error) {
+// parseJWT parses the jwt and returns the payload(middle portion)
+func (c *Config) parseJWT(p string) ([]byte, error) {
 	parts := strings.Split(p, ".")
 	if len(parts) < 2 {
 		return nil, fmt.Errorf("malformed jwt, expected 3 parts got %d", len(parts))
@@ -224,13 +248,13 @@ func (c *Config) ParseJWT(p string) ([]byte, error) {
 }
 
 //HandleLogin gets the user from the request, executes the LoginHandler and then redirects to the input redirect
-func (c *Config) HandleLogin(handler LoginHandler, redirect string) http.HandlerFunc {
+func (c *Config) HandleLogin(redirect string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("code") == "" {
 			http.Error(w, "missing authorization code url param", http.StatusBadRequest)
 			return
 		}
-		sess, err := c.Session(r)
+		sess, err := GetSession(r)
 		if err != nil {
 			http.Error(w, "failed to get session", http.StatusBadRequest)
 			return
@@ -240,15 +264,13 @@ func (c *Config) HandleLogin(handler LoginHandler, redirect string) http.Handler
 			return
 		}
 		//exchange authorization code for a OpenID type containing access token, id token, and userinfo
-		usr, err := c.GetUser(r.Context(), r.URL.Query().Get("code"))
+		usr, err := c.getUser(r.Context(), r.URL.Query().Get("code"))
 		if err != nil {
 			http.Error(w, fmt.Sprintf("failed to get user: %s", err.Error()), http.StatusBadRequest)
 			return
 		}
-		if err := handler(w, r, usr); err != nil {
-			http.Error(w, fmt.Sprintf("failed to handle user: %s", err.Error()), http.StatusBadRequest)
-			return
-		}
+
+		sess.Values[c.userSessionKey()] = usr.ToUser()
 		sess.Values["loggedIn"] = true
 		if err := sess.Save(r, w); err != nil {
 			http.Error(w, "failed to save session", http.StatusBadRequest)
@@ -259,10 +281,10 @@ func (c *Config) HandleLogin(handler LoginHandler, redirect string) http.Handler
 	}
 }
 
-//AuthorizationRedirect is an http handler that redirects the user to the identity providers login screen
-func (c *Config) AuthorizationRedirect() http.HandlerFunc {
+//HandleAuthorizationRedirect is an http handler that redirects the user to the identity providers login screen
+func (c *Config) HandleAuthorizationRedirect() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		sess, err := c.Session(r)
+		sess, err := GetSession(r)
 		if err != nil {
 			http.Error(w, "failed to get session", http.StatusBadRequest)
 			return

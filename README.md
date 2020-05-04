@@ -51,26 +51,24 @@ func NewConfig(opts *Opts) (*Config, error)
 ```
 NewConfig creates a new Config from the given options
 
-#### func (*Config) AuthorizationRedirect
-
-```go
-func (c *Config) AuthorizationRedirect() http.HandlerFunc
-```
-AuthorizationRedirect is an http handler that redirects the user to the identity
-providers login screen
-
 #### func (*Config) GetUser
 
 ```go
-func (c *Config) GetUser(ctx context.Context, code string) (*User, error)
+func (c *Config) GetUser(r *http.Request) (*User, error)
 ```
-GetUser gets an OpenID type by exchanging the authorization code for an access &
-id token, then calling the userinfo endpoint
+
+#### func (*Config) HandleAuthorizationRedirect
+
+```go
+func (c *Config) HandleAuthorizationRedirect() http.HandlerFunc
+```
+HandleAuthorizationRedirect is an http handler that redirects the user to the
+identity providers login screen
 
 #### func (*Config) HandleLogin
 
 ```go
-func (c *Config) HandleLogin(handler LoginHandler, redirect string) http.HandlerFunc
+func (c *Config) HandleLogin(redirect string) http.HandlerFunc
 ```
 HandleLogin gets the user from the request, executes the LoginHandler and then
 redirects to the input redirect
@@ -89,32 +87,12 @@ func (c *Config) OAuth2() *oauth2.Config
 ```
 OAuth2 returns a pointer to the Configs oauth2.Config
 
-#### func (*Config) ParseJWT
-
-```go
-func (c *Config) ParseJWT(p string) ([]byte, error)
-```
-ParseJWT parses the jwt and returns the payload(middle portion)
-
-#### func (*Config) Session
-
-```go
-func (c *Config) Session(r *http.Request) (*sessions.Session, error)
-```
-
 #### func (*Config) UserInfoUrl
 
 ```go
 func (c *Config) UserInfoUrl() string
 ```
 OAuth2 returns the Configs user info url returned from the discovery endpoint
-
-#### type LoginHandler
-
-```go
-type LoginHandler func(w http.ResponseWriter, r *http.Request, usr *User) error
-```
-
 
 #### type Opts
 
@@ -143,18 +121,16 @@ Opts are options used when creating a new Configuration
 
 ```go
 type User struct {
-	AuthToken *oauth2.Token
-	IDToken   map[string]interface{}
-	UserInfo  map[string]interface{}
+	IDToken  map[string]interface{} `json:"id_token"`
+	UserInfo map[string]interface{} `json:"user_info"`
 }
 ```
 
-User contains the Access Token returned from the token endpoint, the ID tokens
-payload, and the payload returned from the userInfo endpoint
+User is a combination of the IDToken and the data returned from the UserInfo
+endpoint
 
 #### func (*User) String
 
 ```go
 func (o *User) String() string
 ```
-String prints a pretty json string of the OpenID

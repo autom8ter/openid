@@ -19,19 +19,26 @@ func main() {
 	if err != nil {
 		log.Fatal(err.Error())
 	}
+	const (
+		home = "/home"
+		login = "/login"
+		authorization = "/login/authorization"
+	)
 	mux := http.NewServeMux()
 	///login/authorization redirects the user to login to the identity provider
-	mux.HandleFunc("/login/authorization", config.AuthorizationRedirect())
+	mux.HandleFunc(authorization, config.HandleAuthorizationRedirect())
 	///mock home
-	mux.HandleFunc("/hello", openid.Middleware(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("hello!"))
-	}, "/login/authorization"))
+	mux.HandleFunc(home, openid.Middleware(func(w http.ResponseWriter, r *http.Request) {
+		usr, err := config.GetUser(r)
+		if err != nil {
+			http.Error(w, "failed to get user", http.StatusInternalServerError)
+			return
+		}
+		w.Write([]byte(usr.String()))
+	}, authorization))
 	//mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 	//	w.Write([]byte("hello!"))
 	//})
-	mux.HandleFunc("/login", config.HandleLogin(func(w http.ResponseWriter, r *http.Request, usr *openid.User) error {
-		log.Print(usr.String())
-		return nil
-	}, "/hello"))
+	mux.HandleFunc(login, config.HandleLogin(home))
 	http.ListenAndServe(":8080", mux)
 }
