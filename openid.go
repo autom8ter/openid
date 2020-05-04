@@ -45,6 +45,7 @@ func (o *User) String() string {
 	return string(bits)
 }
 
+//OnLoginFunc may be optionally passed into config.HandleLogin in order to execute additional logic against the user after the login occurs
 type OnLoginFunc func(u *AuthUser, r *http.Request) error
 
 type wellKnown struct {
@@ -171,8 +172,8 @@ func (c *Config) userSessionKey() string {
 	return fmt.Sprintf("%s_user", c.issuer)
 }
 
-// getUser gets an OpenID type by exchanging the authorization code for an access & id token, then calling the userinfo endpoint
-func (c *Config) getUser(ctx context.Context, code string) (*AuthUser, error) {
+// Exchange gets an AuthUser type by exchanging the authorization code for an access & id token, then calling the userinfo endpoint
+func (c *Config) Exchange(ctx context.Context, code string) (*AuthUser, error) {
 	oauth2Token, err := c.oAuth2.Exchange(ctx, code)
 	if err != nil {
 		return nil, fmt.Errorf("[Access Token] %s", err.Error())
@@ -270,7 +271,7 @@ func (c *Config) HandleLogin(redirect string, onLogins ...OnLoginFunc) http.Hand
 			return
 		}
 		//exchange authorization code for a OpenID type containing access token, id token, and userinfo
-		usr, err := c.getUser(r.Context(), r.URL.Query().Get("code"))
+		usr, err := c.Exchange(r.Context(), r.URL.Query().Get("code"))
 		if err != nil {
 			http.Error(w, fmt.Sprintf("failed to get user: %s", err.Error()), http.StatusBadRequest)
 			return

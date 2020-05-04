@@ -55,7 +55,6 @@ func main() {
 }
 
 ```
-
 ## Usage
 
 ```go
@@ -129,6 +128,14 @@ func NewConfig(opts *Opts) (*Config, error)
 ```
 NewConfig creates a new Config from the given options
 
+#### func (*Config) Exchange
+
+```go
+func (c *Config) Exchange(ctx context.Context, code string) (*AuthUser, error)
+```
+Exchange gets an AuthUser type by exchanging the authorization code for an
+access & id token, then calling the userinfo endpoint
+
 #### func (*Config) GetSession
 
 ```go
@@ -184,6 +191,8 @@ OAuth2 returns the Configs user info url returned from the discovery endpoint
 type OnLoginFunc func(u *AuthUser, r *http.Request) error
 ```
 
+OnLoginFunc may be optionally passed into config.HandleLogin in order to execute
+additional logic against the user after the login occurs
 
 #### type Opts
 
