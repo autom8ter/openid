@@ -31,7 +31,7 @@ var (
 
 //User is a combination of the IDToken and the data returned from the UserInfo endpoint
 type User struct {
-	IDToken map[string]interface{} `json:"id_token"`
+	IDToken  map[string]interface{} `json:"id_token"`
 	UserInfo map[string]interface{} `json:"user_info"`
 }
 
@@ -87,7 +87,7 @@ type user struct {
 func (u user) ToUser() *User {
 	return &User{
 		UserInfo: u.UserInfo,
-		IDToken: u.IDToken,
+		IDToken:  u.IDToken,
 	}
 }
 
