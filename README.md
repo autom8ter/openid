@@ -1,10 +1,17 @@
 # openid
 --
     import "github.com/autom8ter/openid"
-    
+
 ## Example
 
 ```go
+
+import (
+	"github.com/autom8ter/openid"
+	"log"
+	"net/http"
+	"os"
+)
 
 func main() {
 	config, err := openid.NewConfig(&openid.Opts{
@@ -19,11 +26,16 @@ func main() {
 		log.Fatal(err.Error())
 	}
 	const (
+		logout        = "/logout"
 		home          = "/home"                //this is a protected route that cannot be accessed unless they have logged in
 		login         = "/login"               //this is where the identity provider will redirect the user to after they login
 		authorization = "/login/authorization" //redirects the user to login to the identity provider
 	)
 	mux := http.NewServeMux()
+	mux.HandleFunc(logout, func(w http.ResponseWriter, r *http.Request) {
+		openid.Logout(w, r) //clear user session
+		w.Write([]byte("logged out!"))
+	})
 	mux.HandleFunc(authorization, config.HandleAuthorizationRedirect())
 	//protected, will redirect to authorization if not logged in.
 	mux.HandleFunc(home, openid.Middleware(func(w http.ResponseWriter, r *http.Request) {
@@ -35,11 +47,14 @@ func main() {
 		w.Write([]byte(usr.String()))
 	}, authorization))
 	//this is the oauth2 callback that will redirect to home after login
-	mux.HandleFunc(login, config.HandleLogin(home))
+	mux.HandleFunc(login, config.HandleLogin(home, func(u *openid.AuthUser, r *http.Request) error {
+		log.Print(u.ToUser().String())
+		return nil
+	}))
 	http.ListenAndServe(":8080", mux)
 }
-```
 
+```
 
 ## Usage
 
@@ -57,6 +72,14 @@ var (
 func GetSession(r *http.Request) (*sessions.Session, error)
 ```
 
+#### func  Logout
+
+```go
+func Logout(w http.ResponseWriter, r *http.Request)
+```
+Logout logs the user out so they cant pass the middleware without authenticating
+against at least one idp
+
 #### func  Middleware
 
 ```go
@@ -71,6 +94,23 @@ are not logged in
 func SetSession(store *sessions.CookieStore)
 ```
 SetSession overrides the default session store(recommended for production usage)
+
+#### type AuthUser
+
+```go
+type AuthUser struct {
+	AuthToken *oauth2.Token
+	IDToken   map[string]interface{}
+	UserInfo  map[string]interface{}
+}
+```
+
+
+#### func (AuthUser) ToUser
+
+```go
+func (u AuthUser) ToUser() *User
+```
 
 #### type Config
 
@@ -89,6 +129,12 @@ func NewConfig(opts *Opts) (*Config, error)
 ```
 NewConfig creates a new Config from the given options
 
+#### func (*Config) GetSession
+
+```go
+func (c *Config) GetSession(r *http.Request) (*sessions.Session, error)
+```
+
 #### func (*Config) GetUser
 
 ```go
@@ -106,7 +152,7 @@ identity providers login screen
 #### func (*Config) HandleLogin
 
 ```go
-func (c *Config) HandleLogin(redirect string) http.HandlerFunc
+func (c *Config) HandleLogin(redirect string, onLogins ...OnLoginFunc) http.HandlerFunc
 ```
 HandleLogin gets the user from the request, executes the LoginHandler and then
 redirects to the input redirect
@@ -131,6 +177,13 @@ OAuth2 returns a pointer to the Configs oauth2.Config
 func (c *Config) UserInfoUrl() string
 ```
 OAuth2 returns the Configs user info url returned from the discovery endpoint
+
+#### type OnLoginFunc
+
+```go
+type OnLoginFunc func(u *AuthUser, r *http.Request) error
+```
+
 
 #### type Opts
 

@@ -29,6 +29,11 @@ var (
 	DefaultScopes = []string{"openid", "email", "profile"}
 )
 
+//SetSession overrides the default session store(recommended for production usage)
+func SetSession(store *sessions.CookieStore) {
+	session = store
+}
+
 //User is a combination of the IDToken and the data returned from the UserInfo endpoint
 type User struct {
 	IDToken  map[string]interface{} `json:"id_token"`
@@ -40,10 +45,7 @@ func (o *User) String() string {
 	return string(bits)
 }
 
-//SetSession overrides the default session store(recommended for production usage)
-func SetSession(store *sessions.CookieStore) {
-	session = store
-}
+type OnLoginFunc func(u *AuthUser, r *http.Request) error
 
 type wellKnown struct {
 	Issuer      string `json:"issuer"`
@@ -78,13 +80,13 @@ type Config struct {
 	skipIssuer  bool
 }
 
-type user struct {
+type AuthUser struct {
 	AuthToken *oauth2.Token
 	IDToken   map[string]interface{}
 	UserInfo  map[string]interface{}
 }
 
-func (u user) ToUser() *User {
+func (u AuthUser) ToUser() *User {
 	return &User{
 		UserInfo: u.UserInfo,
 		IDToken:  u.IDToken,
@@ -141,7 +143,7 @@ func GetSession(r *http.Request) (*sessions.Session, error) {
 }
 
 func (c *Config) GetUser(r *http.Request) (*User, error) {
-	sess, err := session.Get(r, sessionName)
+	sess, err := session.Get(r, c.oAuth2.ClientID)
 	if err != nil {
 		return nil, err
 	}
@@ -149,6 +151,10 @@ func (c *Config) GetUser(r *http.Request) (*User, error) {
 		return data, nil
 	}
 	return nil, nil
+}
+
+func (c *Config) GetSession(r *http.Request) (*sessions.Session, error) {
+	return session.Get(r, c.oAuth2.ClientID)
 }
 
 // OAuth2 returns the Configs user info url returned from the discovery endpoint
@@ -166,7 +172,7 @@ func (c *Config) userSessionKey() string {
 }
 
 // getUser gets an OpenID type by exchanging the authorization code for an access & id token, then calling the userinfo endpoint
-func (c *Config) getUser(ctx context.Context, code string) (*user, error) {
+func (c *Config) getUser(ctx context.Context, code string) (*AuthUser, error) {
 	oauth2Token, err := c.oAuth2.Exchange(ctx, code)
 	if err != nil {
 		return nil, fmt.Errorf("[Access Token] %s", err.Error())
@@ -227,7 +233,7 @@ func (c *Config) getUser(ctx context.Context, code string) (*user, error) {
 	if idToken["sub"] != usrClaims["sub"] {
 		return nil, fmt.Errorf("[User Info] sub mismatch: %v != %s", idToken["sub"], usrClaims["sub"])
 	}
-	return &user{
+	return &AuthUser{
 		UserInfo:  usrClaims,
 		IDToken:   idToken,
 		AuthToken: oauth2Token,
@@ -248,7 +254,7 @@ func (c *Config) parseJWT(p string) ([]byte, error) {
 }
 
 //HandleLogin gets the user from the request, executes the LoginHandler and then redirects to the input redirect
-func (c *Config) HandleLogin(redirect string) http.HandlerFunc {
+func (c *Config) HandleLogin(redirect string, onLogins ...OnLoginFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("code") == "" {
 			http.Error(w, "missing authorization code url param", http.StatusBadRequest)
@@ -269,11 +275,27 @@ func (c *Config) HandleLogin(redirect string) http.HandlerFunc {
 			http.Error(w, fmt.Sprintf("failed to get user: %s", err.Error()), http.StatusBadRequest)
 			return
 		}
-
-		sess.Values[c.userSessionKey()] = usr.ToUser()
+		if len(onLogins) > 0 {
+			for _, handler := range onLogins {
+				if err := handler(usr, r); err != nil {
+					http.Error(w, fmt.Sprintf("failed to handle user: %s", err.Error()), http.StatusInternalServerError)
+					return
+				}
+			}
+		}
 		sess.Values["loggedIn"] = true
 		if err := sess.Save(r, w); err != nil {
 			http.Error(w, "failed to save session", http.StatusBadRequest)
+			return
+		}
+		userSess, err := c.GetSession(r)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to get user session: %s", err.Error()), http.StatusBadRequest)
+			return
+		}
+		userSess.Values[c.userSessionKey()] = usr.ToUser()
+		if err := userSess.Save(r, w); err != nil {
+			http.Error(w, "failed to save user session", http.StatusBadRequest)
 			return
 		}
 		//redirect to page as authenicated user
@@ -297,6 +319,20 @@ func (c *Config) HandleAuthorizationRedirect() http.HandlerFunc {
 			return
 		}
 		http.Redirect(w, r, c.oAuth2.AuthCodeURL(state), http.StatusTemporaryRedirect)
+	}
+}
+
+//Logout logs the user out so they cant pass the middleware without authenticating against at least one idp
+func Logout(w http.ResponseWriter, r *http.Request) {
+	sess, err := GetSession(r)
+	if err != nil {
+		http.Error(w, "failed to get session", http.StatusBadRequest)
+		return
+	}
+	sess.Values["loggedIn"] = false
+	if err := sess.Save(r, w); err != nil {
+		http.Error(w, "failed to save session", http.StatusBadRequest)
+		return
 	}
 }
 

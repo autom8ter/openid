@@ -20,11 +20,16 @@ func main() {
 		log.Fatal(err.Error())
 	}
 	const (
+		logout        = "/logout"
 		home          = "/home"                //this is a protected route that cannot be accessed unless they have logged in
 		login         = "/login"               //this is where the identity provider will redirect the user to after they login
 		authorization = "/login/authorization" //redirects the user to login to the identity provider
 	)
 	mux := http.NewServeMux()
+	mux.HandleFunc(logout, func(w http.ResponseWriter, r *http.Request) {
+		openid.Logout(w, r) //clear user session
+		w.Write([]byte("logged out!"))
+	})
 	mux.HandleFunc(authorization, config.HandleAuthorizationRedirect())
 	//protected, will redirect to authorization if not logged in.
 	mux.HandleFunc(home, openid.Middleware(func(w http.ResponseWriter, r *http.Request) {
@@ -36,6 +41,9 @@ func main() {
 		w.Write([]byte(usr.String()))
 	}, authorization))
 	//this is the oauth2 callback that will redirect to home after login
-	mux.HandleFunc(login, config.HandleLogin(home))
+	mux.HandleFunc(login, config.HandleLogin(home, func(u *openid.AuthUser, r *http.Request) error {
+		log.Print(u.ToUser().String())
+		return nil
+	}))
 	http.ListenAndServe(":8080", mux)
 }
