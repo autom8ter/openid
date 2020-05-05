@@ -134,6 +134,21 @@ func NewConfig(opts *Opts) (*Config, error) {
 	}, nil
 }
 
+func (c *Config) Copy() *Config {
+	return &Config{
+		oAuth2: &oauth2.Config{
+			ClientID:     c.oAuth2.ClientID,
+			ClientSecret: c.oAuth2.ClientSecret,
+			Endpoint:     c.oAuth2.Endpoint,
+			RedirectURL:  c.oAuth2.RedirectURL,
+			Scopes:       c.oAuth2.Scopes,
+		},
+		issuer:      c.issuer,
+		userInfoUrl: c.userInfoUrl,
+		skipIssuer:  c.skipIssuer,
+	}
+}
+
 // OAuth2 returns a pointer to the Configs oauth2.Config
 func (c *Config) OAuth2() *oauth2.Config {
 	return c.oAuth2
