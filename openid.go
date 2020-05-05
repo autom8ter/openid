@@ -59,18 +59,18 @@ type wellKnown struct {
 type Opts struct {
 	// OpenID Connect describes a metadata document that contains most of the information required for an app to do sign-in.
 	// ex: https://login.microsoftonline.com/organizations/v2.0/.well-known/openid-configuration
-	DiscoveryUrl string
+	DiscoveryUrl string `json:"discoveryUrl"`
 	// ClientID is the application's ID.
-	ClientID string
+	ClientID string `json:"clientID"`
 	// ClientSecret is the application's secret.
-	ClientSecret string
+	ClientSecret string `json:"clientSecret"`
 	// RedirectURL is the URL to redirect users going through
 	// the OAuth flow, after the resource owner's URLs.
-	Redirect string
+	Redirect string `json:"redirect"`
 	// Scope specifies optional requested permissions.
-	Scopes []string
+	Scopes []string `json:"scopes"`
 	// SkipIssuerCheck skips the openid issuer check
-	SkipIssuerCheck bool
+	SkipIssuerCheck bool `json:"skipIssuerCheck"`
 }
 
 //Config is used to to complete the Open ID Connect protocol using the Authorization Grant Authentication Flow.
